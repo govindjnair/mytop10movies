@@ -2,11 +2,15 @@ from flask import Flask, render_template, redirect, url_for, request
 from flask_bootstrap import Bootstrap5
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import Integer, String, Float
+from sqlalchemy import Integer, String, Float, desc
 from flask_wtf import FlaskForm
 from wtforms import StringField, SubmitField
 from wtforms.validators import DataRequired
 import requests
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = '8BYkEfBA6O6doneWlSihBXox7C0sKR6b'
@@ -42,9 +46,9 @@ with app.app_context():
 all_movies = []
 
 
-def add_movie(title, year, description, rating, ranking, review, image_url):
-    movie = Movie(title=title, year=year, description=description, rating=rating, ranking=ranking, review=review,
-                  image_url=image_url)
+def add_movie(title, year, description, image_url):
+    movie = Movie(title=title, year=year, description=description, image_url=image_url)
+
     with app.app_context():
         db.session.add(movie)
         db.session.commit()
@@ -53,7 +57,7 @@ def add_movie(title, year, description, rating, ranking, review, image_url):
 def read_data():
     all_movies.clear()
     with app.app_context():
-        result = db.session.execute(db.select(Movie).order_by(Movie.title))
+        result = db.session.execute(db.select(Movie).order_by(desc(Movie.rating)))
         all_data = result.scalars().all()
         for data in all_data:
             print(data)
@@ -74,21 +78,6 @@ def update_rating(title, value):
         db.session.commit()
 
 
-# add_movie(
-#     title="Phone Booth",
-#     year=2002,
-#     description="Publicist Stuart Shepard finds himself trapped in a phone booth, pinned down by an extortionist's sniper rifle. Unable to leave or receive outside help, Stuart's negotiation with the caller leads to a jaw-dropping climax.",
-#     rating=7.3,
-#     ranking=10,
-#     review="My favourite character was the caller.",
-#     image_url="https://upload.wikimedia.org/wikipedia/en/c/c4/Phone_Booth_movie.jpg"
-# )
-
-
-read_data()
-print(all_movies)
-
-
 class RateMovieForm(FlaskForm):
     rating = StringField("Your Rating Out of 10 e.g. 7.5")
     review = StringField("Your Review")
@@ -103,6 +92,8 @@ class AddMovieForm(FlaskForm):
 @app.route('/')
 def home():
     read_data()
+    for movie in all_movies:
+        movie.ranking = all_movies.index(movie) + 1
     return render_template("index.html", data=all_movies)
 
 
@@ -126,9 +117,27 @@ def modify(movie):
     return redirect(url_for('home'))
 
 
-@app.route('/add')
+@app.route('/add', methods=["GET", "POST"])
 def add_from_web():
     form = AddMovieForm()
+    movie_title = form.title.data
+    if form.validate_on_submit():
+        response = requests.get("http://www.omdbapi.com/",
+                                params={"apikey": os.getenv("OMDB_API_KEY"), "t": movie_title})
+        data = response.json()
+        if data["Response"] == "False":
+            return render_template("oops.html", error=data.get('Error'))
+
+        add_movie(title=data["Title"], year=data["Year"], description=data["Plot"], image_url=data["Poster"])
+
+        with app.app_context():
+            movie = db.session.execute(db.select(Movie).where(Movie.title == data["Title"])).scalar()
+        if movie:
+            movie_id = movie.id
+            return redirect(url_for('edit', id=movie_id))
+        else:
+            return "Movie not found after adding. Please check the database."
+
     return render_template("add.html", form=form)
 
 
